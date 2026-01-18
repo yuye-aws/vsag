@@ -92,8 +92,8 @@ def run_search(index_path, queries_csr, gt_file, beta, gamma, verbose=False):
         if recall_match and qps_match:
             recall = float(recall_match.group(1))
             qps = float(qps_match.group(1))
-            latency_ms = 1000.0 / qps if qps > 0 else float('inf')
-            return recall, qps, latency_ms, True
+            latency_us = 1000000.0 / qps if qps > 0 else float('inf')
+            return recall, qps, latency_us, True
         else:
             return None, None, None, False
             
@@ -112,7 +112,7 @@ def find_best_configs_for_targets(results, target_recalls):
     for target in target_recalls:
         # Find all configs that meet or exceed target recall
         candidates = [
-            (r['recall'], r['qps'], r['latency_ms'], r['beta'], r['gamma'])
+            (r['recall'], r['qps'], r['latency_us'], r['beta'], r['gamma'])
             for r in results
             if r['recall'] >= target
         ]
@@ -127,7 +127,7 @@ def find_best_configs_for_targets(results, target_recalls):
                 'gamma': best_gamma,
                 'recall': best_recall,
                 'qps': best_qps,
-                'latency_ms': best_latency
+                'latency_us': best_latency
             }
     
     return best_configs
@@ -168,7 +168,7 @@ def smart_search_for_target(index_path, queries_csr, gt_file, target_recall, bet
         if verbose:
             print(f"  Testing gamma={gamma}...", end=" ", flush=True)
         
-        recall, qps, latency_ms, success = run_search(index_path, queries_csr, gt_file, beta_value, gamma, verbose=False)
+        recall, qps, latency_us, success = run_search(index_path, queries_csr, gt_file, beta_value, gamma, verbose=False)
         
         if not success:
             if verbose:
@@ -177,7 +177,7 @@ def smart_search_for_target(index_path, queries_csr, gt_file, target_recall, bet
             continue
         
         if verbose:
-            print(f"recall={format_recall_pct(recall)}, latency={latency_ms:.2f}ms")
+            print(f"recall={format_recall_pct(recall)}, latency={latency_us:.2f}us")
         
         if recall >= target_recall:
             # Found a config that works
@@ -187,7 +187,7 @@ def smart_search_for_target(index_path, queries_csr, gt_file, target_recall, bet
                     'gamma': gamma,
                     'recall': recall,
                     'qps': qps,
-                    'latency_ms': latency_ms
+                    'latency_us': latency_us
                 }
             gamma_max = gamma - 1
         else:
@@ -233,7 +233,7 @@ def fast_tune(index_config, target_recalls, verbose=True):
             if config:
                 all_configs[target].append(config)
                 print(f"  ✓ Found: beta={config['beta']}, gamma={config['gamma']}, "
-                      f"recall={format_recall_pct(config['recall'])}, latency={config['latency_ms']:.2f}ms")
+                      f"recall={format_recall_pct(config['recall'])}, latency={config['latency_us']:.2f}us, QPS={config['qps']:.1f}")
             else:
                 print(f"  ✗ Could not achieve target with beta={beta}")
     
@@ -272,7 +272,7 @@ def comprehensive_tune(index_config, beta_values, gamma_values, verbose=True):
                 print(f"[{test_num}/{total_tests}] Testing beta={beta}, gamma={gamma}...", 
                       end=" ", flush=True)
             
-            recall, qps, latency_ms, success = run_search(index_path, queries_csr, gt_file, beta, gamma, verbose=False)
+            recall, qps, latency_us, success = run_search(index_path, queries_csr, gt_file, beta, gamma, verbose=False)
             
             if success:
                 results.append({
@@ -280,11 +280,11 @@ def comprehensive_tune(index_config, beta_values, gamma_values, verbose=True):
                     'gamma': gamma,
                     'recall': recall,
                     'qps': qps,
-                    'latency_ms': latency_ms
+                    'latency_us': latency_us
                 })
                 
                 if verbose:
-                    print(f"recall={format_recall_pct(recall)}, latency={latency_ms:.2f}ms")
+                    print(f"recall={format_recall_pct(recall)}, latency={latency_us:.2f}us, QPS={qps:.1f}")
             else:
                 if verbose:
                     print("FAILED")
@@ -316,7 +316,7 @@ def print_recommendations(index_config, all_configs, target_recalls):
             continue
         
         # Sort by latency (ascending)
-        configs = sorted(all_configs[target], key=lambda x: x['latency_ms'])
+        configs = sorted(all_configs[target], key=lambda x: x['latency_us'])
         
         # Show best config (lowest latency)
         best = configs[0]
@@ -324,7 +324,7 @@ def print_recommendations(index_config, all_configs, target_recalls):
         print(f"  Beta: {best['beta']}")
         print(f"  Gamma: {best['gamma']}")
         print(f"  Achieved Recall: {format_recall_pct(best['recall'])}")
-        print(f"  Latency: {best['latency_ms']:.2f} ms")
+        print(f"  Latency: {best['latency_us']:.2f} us")
         print(f"  QPS: {best['qps']:.1f}")
         print(f"\n  Command:")
         print(f"  ./build-release/sparse/scripts/sindi_index_search \\")
@@ -337,7 +337,7 @@ def print_recommendations(index_config, all_configs, target_recalls):
             print(f"\n  Alternatives:")
             for i, cfg in enumerate(configs[1:4], 1):  # Show up to 3 alternatives
                 print(f"    {i}. beta={cfg['beta']}, gamma={cfg['gamma']}, "
-                      f"recall={format_recall_pct(cfg['recall'])}, latency={cfg['latency_ms']:.2f}ms")
+                      f"recall={format_recall_pct(cfg['recall'])}, latency={cfg['latency_us']:.2f}us, QPS={cfg['qps']:.1f}")
 
 def save_results(index_config, results, filename):
     """Save all results to file"""
@@ -354,15 +354,15 @@ def save_results(index_config, results, filename):
         f.write(f"Threads: {NUM_THREADS}\n")
         f.write("\n")
         
-        f.write(f"{'Beta':<8} {'Gamma':<8} {'Recall':<10} {'Latency(ms)':<12} {'QPS':<10}\n")
+        f.write(f"{'Beta':<8} {'Gamma':<8} {'Recall':<10} {'Latency(us)':<12} {'QPS':<10}\n")
         f.write("-"*70 + "\n")
         
         # Sort by recall, then by latency
-        sorted_results = sorted(results, key=lambda x: (x['recall'], x['latency_ms']), reverse=True)
+        sorted_results = sorted(results, key=lambda x: (x['recall'], x['latency_us']), reverse=True)
         
         for r in sorted_results:
             f.write(f"{r['beta']:<8.2f} {r['gamma']:<8} "
-                   f"{format_recall_pct(r['recall']):<10} {r['latency_ms']:<12.2f} {r['qps']:<10.1f}\n")
+                   f"{format_recall_pct(r['recall']):<10} {r['latency_us']:<12.2f} {r['qps']:<10.1f}\n")
     
     print(f"\nDetailed results saved to: {filename}")
 
