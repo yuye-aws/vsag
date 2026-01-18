@@ -77,7 +77,7 @@ def run_search(index_path, queries_csr, gt_file, beta, gamma, verbose=False):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            timeout=300  # 5 minute timeout
+            timeout=1800  # 30 minute timeout (increased for large indices)
         )
         
         output = result.stdout
