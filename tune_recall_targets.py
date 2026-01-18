@@ -22,11 +22,11 @@ NUM_THREADS = 1
 TARGET_RECALLS = [0.91, 0.93, 0.95, 0.97, 0.99]
 
 # Search space for hyperparameters
-BETA_VALUES = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-GAMMA_VALUES = [50, 100, 150, 200, 300, 400, 500, 700, 1000, 1500, 2000]
+BETA_VALUES = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+GAMMA_VALUES = [5, 10, 15, 20, 30, 40, 50, 75, 100, 150, 200, 300, 400, 500, 700, 1000, 1500, 2000]
 
 def run_search(beta, gamma, verbose=False):
-    """Run search with given beta and gamma, return recall and QPS"""
+    """Run search with given beta and gamma, return recall, QPS, and latency"""
     
     cmd = [
         SEARCH_BIN,
@@ -61,67 +61,73 @@ def run_search(beta, gamma, verbose=False):
         if recall_match and qps_match:
             recall = float(recall_match.group(1))
             qps = float(qps_match.group(1))
-            return recall, qps, True
+            latency_ms = 1000.0 / qps if qps > 0 else float('inf')
+            return recall, qps, latency_ms, True
         else:
-            return None, None, False
+            return None, None, None, False
             
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        return None, None, False
+        return None, None, None, False
 
 def format_recall_pct(recall):
     """Format recall as percentage"""
     return f"{recall*100:.1f}%"
 
 def find_best_configs_for_targets(results, target_recalls):
-    """Find best configuration (highest QPS) for each target recall"""
+    """Find best configuration (lowest latency) for each target recall"""
     
     best_configs = {}
     
     for target in target_recalls:
         # Find all configs that meet or exceed target recall
         candidates = [
-            (r['recall'], r['qps'], r['beta'], r['gamma'])
+            (r['recall'], r['qps'], r['latency_ms'], r['beta'], r['gamma'])
             for r in results
             if r['recall'] >= target
         ]
         
         if candidates:
-            # Sort by QPS (descending) to get highest throughput
-            candidates.sort(key=lambda x: x[1], reverse=True)
-            best_recall, best_qps, best_beta, best_gamma = candidates[0]
+            # Sort by latency (ascending) to get lowest latency
+            candidates.sort(key=lambda x: x[2])
+            best_recall, best_qps, best_latency, best_beta, best_gamma = candidates[0]
             
             best_configs[target] = {
                 'beta': best_beta,
                 'gamma': best_gamma,
                 'recall': best_recall,
-                'qps': best_qps
+                'qps': best_qps,
+                'latency_ms': best_latency
             }
     
     return best_configs
 
-def smart_search_for_target(target_recall, beta_values, verbose=False):
+def smart_search_for_target(target_recall, beta_value, verbose=False):
     """
     Smart binary search for gamma given a beta value
     Finds minimum gamma that achieves target recall
     """
     
-    gamma_min = 50
+    gamma_min = 5
     gamma_max = 2000
     best_config = None
     
     # Try a few gamma values with binary search approach
     tested_gammas = set()
     
-    for _ in range(8):  # Max 8 iterations
+    for _ in range(10):  # Max 10 iterations
         gamma = (gamma_min + gamma_max) // 2
         
         # Round to nearest "nice" value
-        if gamma < 200:
-            gamma = round(gamma / 50) * 50
+        if gamma < 20:
+            gamma = round(gamma / 5) * 5
+        elif gamma < 100:
+            gamma = round(gamma / 10) * 10
+        elif gamma < 200:
+            gamma = round(gamma / 25) * 25
         elif gamma < 1000:
-            gamma = round(gamma / 100) * 100
+            gamma = round(gamma / 50) * 50
         else:
-            gamma = round(gamma / 250) * 250
+            gamma = round(gamma / 100) * 100
         
         if gamma in tested_gammas:
             break
@@ -131,7 +137,7 @@ def smart_search_for_target(target_recall, beta_values, verbose=False):
         if verbose:
             print(f"  Testing gamma={gamma}...", end=" ", flush=True)
         
-        recall, qps, success = run_search(beta, gamma, verbose=False)
+        recall, qps, latency_ms, success = run_search(beta_value, gamma, verbose=False)
         
         if not success:
             if verbose:
@@ -140,16 +146,17 @@ def smart_search_for_target(target_recall, beta_values, verbose=False):
             continue
         
         if verbose:
-            print(f"recall={format_recall_pct(recall)}, qps={qps:.1f}")
+            print(f"recall={format_recall_pct(recall)}, latency={latency_ms:.2f}ms")
         
         if recall >= target_recall:
             # Found a config that works
             if best_config is None or gamma < best_config['gamma']:
                 best_config = {
-                    'beta': beta,
+                    'beta': beta_value,
                     'gamma': gamma,
                     'recall': recall,
-                    'qps': qps
+                    'qps': qps,
+                    'latency_ms': latency_ms
                 }
             gamma_max = gamma - 1
         else:
@@ -173,7 +180,7 @@ def fast_tune(target_recalls, verbose=True):
     print()
     
     # Strategic beta values to test (fewer but well-chosen)
-    strategic_betas = [0.5, 0.7, 0.9, 1.0]
+    strategic_betas = [0.1, 0.2, 0.3, 0.4, 0.5]
     
     all_configs = defaultdict(list)
     
@@ -189,7 +196,7 @@ def fast_tune(target_recalls, verbose=True):
             if config:
                 all_configs[target].append(config)
                 print(f"  ✓ Found: beta={config['beta']}, gamma={config['gamma']}, "
-                      f"recall={format_recall_pct(config['recall'])}, qps={config['qps']:.1f}")
+                      f"recall={format_recall_pct(config['recall'])}, latency={config['latency_ms']:.2f}ms")
             else:
                 print(f"  ✗ Could not achieve target with beta={beta}")
     
@@ -222,18 +229,19 @@ def comprehensive_tune(beta_values, gamma_values, verbose=True):
                 print(f"[{test_num}/{total_tests}] Testing beta={beta}, gamma={gamma}...", 
                       end=" ", flush=True)
             
-            recall, qps, success = run_search(beta, gamma, verbose=False)
+            recall, qps, latency_ms, success = run_search(beta, gamma, verbose=False)
             
             if success:
                 results.append({
                     'beta': beta,
                     'gamma': gamma,
                     'recall': recall,
-                    'qps': qps
+                    'qps': qps,
+                    'latency_ms': latency_ms
                 })
                 
                 if verbose:
-                    print(f"recall={format_recall_pct(recall)}, qps={qps:.1f}")
+                    print(f"recall={format_recall_pct(recall)}, latency={latency_ms:.2f}ms")
             else:
                 if verbose:
                     print("FAILED")
@@ -260,15 +268,16 @@ def print_recommendations(all_configs, target_recalls):
             print("  Suggestion: Rebuild index with higher alpha (e.g., 0.9 or 1.0)")
             continue
         
-        # Sort by QPS (descending)
-        configs = sorted(all_configs[target], key=lambda x: x['qps'], reverse=True)
+        # Sort by latency (ascending)
+        configs = sorted(all_configs[target], key=lambda x: x['latency_ms'])
         
-        # Show best config (highest QPS)
+        # Show best config (lowest latency)
         best = configs[0]
-        print(f"\n⭐ RECOMMENDED (Best QPS):")
+        print(f"\n⭐ RECOMMENDED (Lowest Latency):")
         print(f"  Beta: {best['beta']}")
         print(f"  Gamma: {best['gamma']}")
         print(f"  Achieved Recall: {format_recall_pct(best['recall'])}")
+        print(f"  Latency: {best['latency_ms']:.2f} ms")
         print(f"  QPS: {best['qps']:.1f}")
         print(f"\n  Command:")
         print(f"  ./build-release/sparse/scripts/sindi_index_search \\")
@@ -281,7 +290,7 @@ def print_recommendations(all_configs, target_recalls):
             print(f"\n  Alternatives:")
             for i, cfg in enumerate(configs[1:4], 1):  # Show up to 3 alternatives
                 print(f"    {i}. beta={cfg['beta']}, gamma={cfg['gamma']}, "
-                      f"recall={format_recall_pct(cfg['recall'])}, qps={cfg['qps']:.1f}")
+                      f"recall={format_recall_pct(cfg['recall'])}, latency={cfg['latency_ms']:.2f}ms")
 
 def save_results(results, filename="recall_tuning_results.txt"):
     """Save all results to file"""
@@ -297,20 +306,23 @@ def save_results(results, filename="recall_tuning_results.txt"):
         f.write(f"Threads: {NUM_THREADS}\n")
         f.write("\n")
         
-        f.write(f"{'Beta':<8} {'Gamma':<8} {'Recall':<10} {'QPS':<10}\n")
+        f.write(f"{'Beta':<8} {'Gamma':<8} {'Recall':<10} {'Latency(ms)':<12} {'QPS':<10}\n")
         f.write("-"*70 + "\n")
         
-        # Sort by recall, then by QPS
-        sorted_results = sorted(results, key=lambda x: (x['recall'], x['qps']), reverse=True)
+        # Sort by recall, then by latency
+        sorted_results = sorted(results, key=lambda x: (x['recall'], x['latency_ms']), reverse=True)
         
         for r in sorted_results:
-            f.write(f"{r['beta']:<8.1f} {r['gamma']:<8} "
-                   f"{format_recall_pct(r['recall']):<10} {r['qps']:<10.1f}\n")
+            f.write(f"{r['beta']:<8.2f} {r['gamma']:<8} "
+                   f"{format_recall_pct(r['recall']):<10} {r['latency_ms']:<12.2f} {r['qps']:<10.1f}\n")
     
     print(f"\nDetailed results saved to: {filename}")
 
 def main():
     import argparse
+    
+    # Declare globals at the start
+    global INDEX_PATH, QUERIES_CSR, GT_FILE
     
     parser = argparse.ArgumentParser(
         description="Tune SINDI search hyperparameters for target recalls"
@@ -345,7 +357,6 @@ def main():
     args = parser.parse_args()
     
     # Update global config from args
-    global INDEX_PATH, QUERIES_CSR, GT_FILE
     INDEX_PATH = args.index
     QUERIES_CSR = args.queries
     GT_FILE = args.gt
