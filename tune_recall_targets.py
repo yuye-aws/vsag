@@ -2,6 +2,7 @@
 """
 Tune SINDI search hyperparameters to achieve target recall levels
 Finds optimal beta and gamma values for 91%, 93%, 95%, 97%, 99% recall
+Works with multiple index files (MSMarco v1 and NQ, with different alpha values)
 """
 
 import subprocess
@@ -9,14 +10,44 @@ import re
 import time
 from datetime import datetime
 from collections import defaultdict
+import os
 
 # Configuration
 SEARCH_BIN = "/home/ec2-user/Code/vsag/build-release/sparse/scripts/sindi_index_search"
-INDEX_PATH = "msmarco_v1_sindi_no_prune.index"
-QUERIES_CSR = "/home/ec2-user/sparse_datasets/msmarco_v1_cocondenser/queries.csr"
-GT_FILE = "msmarco_v1_gt.bin"
 TOPK = 10
 NUM_THREADS = 1
+
+# Index configurations - matches output from build_sindi_indices.py
+INDEX_CONFIGS = [
+    {
+        "name": "msmarco_v1_no_prune",
+        "index_path": "msmarco_v1_sindi_no_prune.index",
+        "queries_csr": "/home/ec2-user/sparse_datasets/msmarco_v1_cocondenser/queries.csr",
+        "gt_file": "msmarco_v1_gt.bin",
+        "alpha": 1.0
+    },
+    {
+        "name": "msmarco_v1_alpha_0.3",
+        "index_path": "msmarco_v1_sindi_alpha_0.3.index",
+        "queries_csr": "/home/ec2-user/sparse_datasets/msmarco_v1_cocondenser/queries.csr",
+        "gt_file": "msmarco_v1_gt.bin",
+        "alpha": 0.3
+    },
+    {
+        "name": "nq_no_prune",
+        "index_path": "nq_sindi_no_prune.index",
+        "queries_csr": "/home/ec2-user/sparse_datasets/nq_cocondenser/nq_queries.csr",
+        "gt_file": "nq_gt.bin",
+        "alpha": 1.0
+    },
+    {
+        "name": "nq_alpha_0.3",
+        "index_path": "nq_sindi_alpha_0.3.index",
+        "queries_csr": "/home/ec2-user/sparse_datasets/nq_cocondenser/nq_queries.csr",
+        "gt_file": "nq_gt.bin",
+        "alpha": 0.3
+    }
+]
 
 # Target recalls to achieve
 TARGET_RECALLS = [0.91, 0.93, 0.95, 0.97, 0.99]
@@ -25,14 +56,14 @@ TARGET_RECALLS = [0.91, 0.93, 0.95, 0.97, 0.99]
 BETA_VALUES = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 GAMMA_VALUES = [5, 10, 15, 20, 30, 40, 50, 75, 100, 150, 200, 300, 400, 500, 700, 1000, 1500, 2000]
 
-def run_search(beta, gamma, verbose=False):
+def run_search(index_path, queries_csr, gt_file, beta, gamma, verbose=False):
     """Run search with given beta and gamma, return recall, QPS, and latency"""
     
     cmd = [
         SEARCH_BIN,
-        INDEX_PATH,
-        QUERIES_CSR,
-        GT_FILE,
+        index_path,
+        queries_csr,
+        gt_file,
         str(beta),
         str(gamma),
         str(TOPK),
@@ -101,7 +132,7 @@ def find_best_configs_for_targets(results, target_recalls):
     
     return best_configs
 
-def smart_search_for_target(target_recall, beta_value, verbose=False):
+def smart_search_for_target(index_path, queries_csr, gt_file, target_recall, beta_value, verbose=False):
     """
     Smart binary search for gamma given a beta value
     Finds minimum gamma that achieves target recall
@@ -137,7 +168,7 @@ def smart_search_for_target(target_recall, beta_value, verbose=False):
         if verbose:
             print(f"  Testing gamma={gamma}...", end=" ", flush=True)
         
-        recall, qps, latency_ms, success = run_search(beta_value, gamma, verbose=False)
+        recall, qps, latency_ms, success = run_search(index_path, queries_csr, gt_file, beta_value, gamma, verbose=False)
         
         if not success:
             if verbose:
@@ -167,14 +198,20 @@ def smart_search_for_target(target_recall, beta_value, verbose=False):
     
     return best_config
 
-def fast_tune(target_recalls, verbose=True):
+def fast_tune(index_config, target_recalls, verbose=True):
     """
     Fast tuning strategy: test strategic beta values and find optimal gamma
     """
     
+    index_path = index_config['index_path']
+    queries_csr = index_config['queries_csr']
+    gt_file = index_config['gt_file']
+    
     print("="*70)
-    print("FAST TUNING MODE")
+    print(f"FAST TUNING: {index_config['name']}")
     print("="*70)
+    print(f"Index: {index_path}")
+    print(f"Alpha: {index_config['alpha']}")
     print(f"Strategy: Test strategic beta values, find optimal gamma for each target")
     print(f"Target recalls: {', '.join([format_recall_pct(t) for t in target_recalls])}")
     print()
@@ -191,7 +228,7 @@ def fast_tune(target_recalls, verbose=True):
         
         for beta in strategic_betas:
             print(f"\nTesting beta={beta}:")
-            config = smart_search_for_target(target, beta, verbose=verbose)
+            config = smart_search_for_target(index_path, queries_csr, gt_file, target, beta, verbose=verbose)
             
             if config:
                 all_configs[target].append(config)
@@ -202,14 +239,20 @@ def fast_tune(target_recalls, verbose=True):
     
     return all_configs
 
-def comprehensive_tune(beta_values, gamma_values, verbose=True):
+def comprehensive_tune(index_config, beta_values, gamma_values, verbose=True):
     """
     Comprehensive grid search: test all beta/gamma combinations
     """
     
+    index_path = index_config['index_path']
+    queries_csr = index_config['queries_csr']
+    gt_file = index_config['gt_file']
+    
     print("="*70)
-    print("COMPREHENSIVE GRID SEARCH MODE")
+    print(f"COMPREHENSIVE GRID SEARCH: {index_config['name']}")
     print("="*70)
+    print(f"Index: {index_path}")
+    print(f"Alpha: {index_config['alpha']}")
     print(f"Testing {len(beta_values)} beta values × {len(gamma_values)} gamma values")
     print(f"Total configurations: {len(beta_values) * len(gamma_values)}")
     print(f"Estimated time: ~{len(beta_values) * len(gamma_values) * 2 / 60:.0f} minutes")
@@ -229,7 +272,7 @@ def comprehensive_tune(beta_values, gamma_values, verbose=True):
                 print(f"[{test_num}/{total_tests}] Testing beta={beta}, gamma={gamma}...", 
                       end=" ", flush=True)
             
-            recall, qps, latency_ms, success = run_search(beta, gamma, verbose=False)
+            recall, qps, latency_ms, success = run_search(index_path, queries_csr, gt_file, beta, gamma, verbose=False)
             
             if success:
                 results.append({
@@ -251,11 +294,15 @@ def comprehensive_tune(beta_values, gamma_values, verbose=True):
     
     return results
 
-def print_recommendations(all_configs, target_recalls):
+def print_recommendations(index_config, all_configs, target_recalls):
     """Print recommendations for each target recall"""
     
+    index_path = index_config['index_path']
+    queries_csr = index_config['queries_csr']
+    gt_file = index_config['gt_file']
+    
     print("\n" + "="*70)
-    print("RECOMMENDATIONS")
+    print(f"RECOMMENDATIONS FOR: {index_config['name']}")
     print("="*70)
     
     for target in target_recalls:
@@ -281,9 +328,9 @@ def print_recommendations(all_configs, target_recalls):
         print(f"  QPS: {best['qps']:.1f}")
         print(f"\n  Command:")
         print(f"  ./build-release/sparse/scripts/sindi_index_search \\")
-        print(f"      {INDEX_PATH} \\")
-        print(f"      {QUERIES_CSR} \\")
-        print(f"      {GT_FILE} {best['beta']} {best['gamma']} {TOPK} {NUM_THREADS}")
+        print(f"      {index_path} \\")
+        print(f"      {queries_csr} \\")
+        print(f"      {gt_file} {best['beta']} {best['gamma']} {TOPK} {NUM_THREADS}")
         
         # Show alternatives if available
         if len(configs) > 1:
@@ -292,16 +339,17 @@ def print_recommendations(all_configs, target_recalls):
                 print(f"    {i}. beta={cfg['beta']}, gamma={cfg['gamma']}, "
                       f"recall={format_recall_pct(cfg['recall'])}, latency={cfg['latency_ms']:.2f}ms")
 
-def save_results(results, filename="recall_tuning_results.txt"):
+def save_results(index_config, results, filename):
     """Save all results to file"""
     
     with open(filename, "w") as f:
-        f.write("SINDI Recall Tuning Results\n")
+        f.write(f"SINDI Recall Tuning Results: {index_config['name']}\n")
         f.write("="*70 + "\n")
         f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"Index: {INDEX_PATH}\n")
-        f.write(f"Queries: {QUERIES_CSR}\n")
-        f.write(f"Ground Truth: {GT_FILE}\n")
+        f.write(f"Index: {index_config['index_path']}\n")
+        f.write(f"Alpha: {index_config['alpha']}\n")
+        f.write(f"Queries: {index_config['queries_csr']}\n")
+        f.write(f"Ground Truth: {index_config['gt_file']}\n")
         f.write(f"Top-K: {TOPK}\n")
         f.write(f"Threads: {NUM_THREADS}\n")
         f.write("\n")
@@ -321,11 +369,8 @@ def save_results(results, filename="recall_tuning_results.txt"):
 def main():
     import argparse
     
-    # Declare globals at the start
-    global INDEX_PATH, QUERIES_CSR, GT_FILE
-    
     parser = argparse.ArgumentParser(
-        description="Tune SINDI search hyperparameters for target recalls"
+        description="Tune SINDI search hyperparameters for target recalls across multiple indices"
     )
     parser.add_argument(
         "--mode",
@@ -334,19 +379,11 @@ def main():
         help="Tuning mode: 'fast' for strategic search, 'comprehensive' for grid search"
     )
     parser.add_argument(
-        "--index",
-        default=INDEX_PATH,
-        help=f"Path to index file (default: {INDEX_PATH})"
-    )
-    parser.add_argument(
-        "--queries",
-        default=QUERIES_CSR,
-        help=f"Path to queries CSR file (default: {QUERIES_CSR})"
-    )
-    parser.add_argument(
-        "--gt",
-        default=GT_FILE,
-        help=f"Path to ground truth file (default: {GT_FILE})"
+        "--indices",
+        nargs="+",
+        choices=["msmarco_v1_no_prune", "msmarco_v1_alpha_0.3", "nq_no_prune", "nq_alpha_0.3", "all"],
+        default=["all"],
+        help="Which indices to tune (default: all)"
     )
     parser.add_argument(
         "--quiet",
@@ -356,46 +393,75 @@ def main():
     
     args = parser.parse_args()
     
-    # Update global config from args
-    INDEX_PATH = args.index
-    QUERIES_CSR = args.queries
-    GT_FILE = args.gt
-    
     verbose = not args.quiet
     
+    # Determine which indices to process
+    if "all" in args.indices:
+        indices_to_process = INDEX_CONFIGS
+    else:
+        indices_to_process = [cfg for cfg in INDEX_CONFIGS if cfg['name'] in args.indices]
+    
+    # Filter to only existing index files
+    available_indices = []
+    for cfg in indices_to_process:
+        if os.path.exists(cfg['index_path']):
+            available_indices.append(cfg)
+        else:
+            print(f"⚠ Warning: Index file not found: {cfg['index_path']}, skipping...")
+    
+    if not available_indices:
+        print("✗ Error: No valid index files found!")
+        print("\nPlease run build_sindi_indices.py first to create the index files.")
+        return
+    
     print("="*70)
-    print("SINDI RECALL TUNING SCRIPT")
+    print("SINDI RECALL TUNING SCRIPT - MULTI-INDEX")
     print("="*70)
     print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Mode: {args.mode.upper()}")
-    print(f"Index: {INDEX_PATH}")
-    print(f"Queries: {QUERIES_CSR}")
-    print(f"Ground Truth: {GT_FILE}")
+    print(f"Indices to process: {len(available_indices)}")
+    for cfg in available_indices:
+        print(f"  - {cfg['name']} (alpha={cfg['alpha']})")
     print()
     
-    start_time = time.time()
+    overall_start_time = time.time()
     
-    if args.mode == "fast":
-        # Fast tuning mode
-        all_configs = fast_tune(TARGET_RECALLS, verbose=verbose)
-        print_recommendations(all_configs, TARGET_RECALLS)
+    # Process each index
+    for idx, index_config in enumerate(available_indices, 1):
+        print("\n" + "="*70)
+        print(f"PROCESSING INDEX {idx}/{len(available_indices)}: {index_config['name']}")
+        print("="*70)
         
-    else:
-        # Comprehensive mode
-        results = comprehensive_tune(BETA_VALUES, GAMMA_VALUES, verbose=verbose)
+        start_time = time.time()
         
-        if results:
-            # Save detailed results
-            save_results(results)
+        if args.mode == "fast":
+            # Fast tuning mode
+            all_configs = fast_tune(index_config, TARGET_RECALLS, verbose=verbose)
+            print_recommendations(index_config, all_configs, TARGET_RECALLS)
             
-            # Find best configs for each target
-            all_configs = find_best_configs_for_targets(results, TARGET_RECALLS)
-            print_recommendations(all_configs, TARGET_RECALLS)
+        else:
+            # Comprehensive mode
+            results = comprehensive_tune(index_config, BETA_VALUES, GAMMA_VALUES, verbose=verbose)
+            
+            if results:
+                # Save detailed results
+                filename = f"recall_tuning_{index_config['name']}.txt"
+                save_results(index_config, results, filename)
+                
+                # Find best configs for each target
+                all_configs = find_best_configs_for_targets(results, TARGET_RECALLS)
+                print_recommendations(index_config, all_configs, TARGET_RECALLS)
+        
+        elapsed = time.time() - start_time
+        print(f"\n⏱ Time for {index_config['name']}: {elapsed/60:.1f} minutes")
     
-    elapsed = time.time() - start_time
+    overall_elapsed = time.time() - overall_start_time
     
     print("\n" + "="*70)
-    print(f"Total time: {elapsed/60:.1f} minutes")
+    print("ALL INDICES COMPLETED")
+    print("="*70)
+    print(f"Total indices processed: {len(available_indices)}")
+    print(f"Total time: {overall_elapsed/60:.1f} minutes")
     print(f"End time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*70)
 
