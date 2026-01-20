@@ -20,32 +20,11 @@ NUM_THREADS = 1
 # Index configurations - matches output from build_sindi_indices.py
 INDEX_CONFIGS = [
     {
-        "name": "msmarco_v1_no_prune",
-        "index_path": "msmarco_v1_sindi_no_prune.index",
-        "queries_csr": "/home/ec2-user/sparse_datasets/msmarco_v1_cocondenser/queries.csr",
-        "gt_file": "msmarco_v1_gt.bin",
+        "name": "msmarco_v2_no_prune",
+        "index_path": "msmarco_v2_sindi_no_prune.index",
+        "queries_csr": "/home/ec2-user/sparse_datasets/msmarco_v2/queries.csr",
+        "gt_file": "msmarco_v2_gt_corrected.bin",
         "alpha": 1.0
-    },
-    {
-        "name": "msmarco_v1_alpha_0.3",
-        "index_path": "msmarco_v1_sindi_alpha_0.3.index",
-        "queries_csr": "/home/ec2-user/sparse_datasets/msmarco_v1_cocondenser/queries.csr",
-        "gt_file": "msmarco_v1_gt.bin",
-        "alpha": 0.3
-    },
-    {
-        "name": "nq_no_prune",
-        "index_path": "nq_sindi_no_prune.index",
-        "queries_csr": "/home/ec2-user/sparse_datasets/nq_cocondenser/nq_queries.csr",
-        "gt_file": "nq_gt.bin",
-        "alpha": 1.0
-    },
-    {
-        "name": "nq_alpha_0.3",
-        "index_path": "nq_sindi_alpha_0.3.index",
-        "queries_csr": "/home/ec2-user/sparse_datasets/nq_cocondenser/nq_queries.csr",
-        "gt_file": "nq_gt.bin",
-        "alpha": 0.3
     }
 ]
 
@@ -217,7 +196,7 @@ def fast_tune(index_config, target_recalls, verbose=True):
     print()
 
     # Strategic beta values to test (fewer but well-chosen)
-    strategic_betas = [0.1, 0.2, 0.3, 0.4, 0.5]
+    strategic_betas = [0.05, 0.075, 0.1, 0.125, 0.15]
 
     all_configs = defaultdict(list)
 

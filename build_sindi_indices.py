@@ -23,14 +23,9 @@ NUM_THREADS = 1  # Single-threaded for consistent benchmarking
 # Dataset configurations
 DATASETS = [
     {
-        "name": "msmarco_v1",
-        "docs_csr": "/home/ec2-user/sparse_datasets/msmarco_v1_cocondenser/docs.csr",
-        "queries_csr": "/home/ec2-user/sparse_datasets/msmarco_v1_cocondenser/queries.csr",
-    },
-    {
-        "name": "nq",
-        "docs_csr": "/home/ec2-user/sparse_datasets/nq_cocondenser/nq_docs.csr",
-        "queries_csr": "/home/ec2-user/sparse_datasets/nq_cocondenser/nq_queries.csr",
+        "name": "msmarco_v2",
+        "docs_csr": "/home/ec2-user/sparse_datasets/msmarco_v2/merged_passages.csr",
+        "queries_csr": "/home/ec2-user/sparse_datasets/msmarco_v2/queries.csr",
     }
 ]
 
