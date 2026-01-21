@@ -194,7 +194,7 @@ def binary_search_beta(index_path, queries_csr, gt_file, target_recall, gamma,
     return best_config, iteration_results
 
 
-def tune_index(index_config, target_recalls, gamma, verbose=True):
+def tune_index(index_config, target_recalls, gamma, iterations=10, verbose=True):
     """
     Tune beta for multiple target recalls on a single index
     """
@@ -209,7 +209,7 @@ def tune_index(index_config, target_recalls, gamma, verbose=True):
     print(f"Index: {index_path}")
     print(f"Alpha: {index_config['alpha']}")
     print(f"Fixed Gamma: {gamma}")
-    print(f"Binary Search Iterations: {BINARY_SEARCH_ITERATIONS}")
+    print(f"Binary Search Iterations: {iterations}")
     print(f"Target Recalls: {', '.join([format_recall_pct(t) for t in target_recalls])}")
     print("="*70)
     
@@ -221,7 +221,7 @@ def tune_index(index_config, target_recalls, gamma, verbose=True):
         best_config, iteration_results = binary_search_beta(
             index_path, queries_csr, gt_file, target, gamma,
             beta_min=0.0, beta_max=1.0,
-            max_iterations=BINARY_SEARCH_ITERATIONS,
+            max_iterations=iterations,
             verbose=verbose
         )
         
@@ -239,13 +239,13 @@ def tune_index(index_config, target_recalls, gamma, verbose=True):
     return all_results
 
 
-def print_summary(index_config, all_results, target_recalls):
+def print_summary(index_config, all_results, target_recalls, gamma):
     """Print summary of all results"""
     
     print("\n" + "="*70)
     print(f"SUMMARY: {index_config['name']}")
     print("="*70)
-    print(f"Fixed Gamma: {FIXED_GAMMA}")
+    print(f"Fixed Gamma: {gamma}")
     print()
     
     print(f"{'Target':<12} {'Beta':<10} {'Achieved':<12} {'Latency(us)':<14} {'QPS':<10} {'Status':<10}")
@@ -290,7 +290,7 @@ def print_summary(index_config, all_results, target_recalls):
             print(f"    {best['beta']:.4f} {best['gamma']} {TOPK} {NUM_THREADS}")
 
 
-def save_detailed_results(index_config, all_results, target_recalls, filename):
+def save_detailed_results(index_config, all_results, target_recalls, gamma, iterations, filename):
     """Save detailed results to file"""
     
     with open(filename, "w") as f:
@@ -299,8 +299,8 @@ def save_detailed_results(index_config, all_results, target_recalls, filename):
         f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"Index: {index_config['index_path']}\n")
         f.write(f"Alpha: {index_config['alpha']}\n")
-        f.write(f"Fixed Gamma: {FIXED_GAMMA}\n")
-        f.write(f"Binary Search Iterations: {BINARY_SEARCH_ITERATIONS}\n")
+        f.write(f"Fixed Gamma: {gamma}\n")
+        f.write(f"Binary Search Iterations: {iterations}\n")
         f.write(f"Top-K: {TOPK}\n")
         f.write(f"Threads: {NUM_THREADS}\n")
         f.write("\n")
@@ -347,21 +347,21 @@ def main():
     parser.add_argument(
         "--gamma",
         type=int,
-        default=FIXED_GAMMA,
-        help=f"Fixed gamma value (default: {FIXED_GAMMA})"
+        default=500,
+        help="Fixed gamma value (default: 500)"
     )
     parser.add_argument(
         "--iterations",
         type=int,
-        default=BINARY_SEARCH_ITERATIONS,
-        help=f"Number of binary search iterations (default: {BINARY_SEARCH_ITERATIONS})"
+        default=10,
+        help="Number of binary search iterations (default: 10)"
     )
     parser.add_argument(
         "--targets",
         nargs="+",
         type=float,
-        default=TARGET_RECALLS,
-        help=f"Target recall values (default: {TARGET_RECALLS})"
+        default=None,
+        help="Target recall values (default: 0.91, 0.93, 0.95, 0.97, 0.99)"
     )
     parser.add_argument(
         "--index",
@@ -377,11 +377,10 @@ def main():
     
     args = parser.parse_args()
     
-    # Update global settings
-    global FIXED_GAMMA, BINARY_SEARCH_ITERATIONS, TARGET_RECALLS
-    FIXED_GAMMA = args.gamma
-    BINARY_SEARCH_ITERATIONS = args.iterations
-    TARGET_RECALLS = sorted(args.targets)
+    # Set parameters from args
+    gamma = args.gamma
+    iterations = args.iterations
+    target_recalls = sorted(args.targets) if args.targets else [0.91, 0.93, 0.95, 0.97, 0.99]
     
     verbose = not args.quiet
     
@@ -408,9 +407,9 @@ def main():
     print("SINDI BETA BINARY SEARCH TUNING")
     print("="*70)
     print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Fixed Gamma: {FIXED_GAMMA}")
-    print(f"Binary Search Iterations: {BINARY_SEARCH_ITERATIONS}")
-    print(f"Target Recalls: {', '.join([format_recall_pct(t) for t in TARGET_RECALLS])}")
+    print(f"Fixed Gamma: {gamma}")
+    print(f"Binary Search Iterations: {iterations}")
+    print(f"Target Recalls: {', '.join([format_recall_pct(t) for t in target_recalls])}")
     print(f"Indices to process: {len(available_indices)}")
     for cfg in available_indices:
         print(f"  - {cfg['name']} (alpha={cfg['alpha']})")
@@ -427,14 +426,14 @@ def main():
         start_time = time.time()
         
         all_results = tune_index(
-            index_config, TARGET_RECALLS, FIXED_GAMMA, verbose=verbose
+            index_config, target_recalls, gamma, iterations, verbose=verbose
         )
         
-        print_summary(index_config, all_results, TARGET_RECALLS)
+        print_summary(index_config, all_results, target_recalls, gamma)
         
         # Save detailed results
-        filename = f"beta_binary_search_{index_config['name']}_gamma{FIXED_GAMMA}.txt"
-        save_detailed_results(index_config, all_results, TARGET_RECALLS, filename)
+        filename = f"beta_binary_search_{index_config['name']}_gamma{gamma}.txt"
+        save_detailed_results(index_config, all_results, target_recalls, gamma, iterations, filename)
         
         elapsed = time.time() - start_time
         print(f"\n⏱ Total time for {index_config['name']}: {elapsed/60:.1f} minutes")
